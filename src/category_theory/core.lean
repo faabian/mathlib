@@ -6,6 +6,7 @@ Authors: Scott Morrison
 
 import category_theory.groupoid
 import category_theory.equivalence
+import category_theory.whiskering
 
 namespace category_theory
 
@@ -40,14 +41,7 @@ def functor_to_core (F : G ⥤ C) : G ⥤ core C :=
 { obj := λ X, F.obj X,
   map := λ X Y f, ⟨F.map f, F.map (inv f)⟩ }
 
-def forget_functor_to_core : (G ⥤ core C) ⥤ (G ⥤ C) :=
-{ obj := λ F,
-  { obj := λ X, F.obj X,
-    map := λ X Y f, (F.map f).hom },
-  map := λ F G τ,
-  { app := λ X, (τ.app X).hom ,
-    naturality' := λ X Y f, begin dsimp, rw [←core.comp_hom, τ.naturality, core.comp_hom], end} }.
-
+def forget_functor_to_core : (G ⥤ core C) ⥤ (G ⥤ C) := (whiskering_right _ _ _).obj inclusion
 end core
 
 end category_theory

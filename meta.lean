@@ -3,7 +3,7 @@ Copyright (c) 2019 Fabian Glöckle. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Fabian Glöckle
 
-Generate categories of types with "has_x"-operators and compatible maps as morphisms.
+Generate categories corresponding to structures.
 -/
 
 import algebra.group
@@ -59,7 +59,7 @@ match codomain_type l with
 end
 
 meta def arity_homog (x : string) : tactic ℕ :=
-do let htt := name.mk_string x (name.mk_simple_name (string.append "has_" x) name.anonymous),
+do let htt := name.mk_string x (name.mk_string (string.append "has_" x) name.anonymous),
   htc ← mk_const htt,
   t ← infer_type htc,
   let body := binding_body (binding_body t),

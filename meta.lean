@@ -119,7 +119,7 @@ do t ← infer_type field,
 
 meta def add_concrete_category (x : string) : command :=
 do let has_x_name := name.mk_string (string.append "has_" x) name.anonymous,
-   has_x ← mk_const has_x_name, -- [level.zero],
+   has_x ← mk_const has_x_name,
    let compatible_name := name.mk_string (string.append x "_compatible") name.anonymous,
    let compatible_id_name := name.mk_string (string.append x "_compatible_id") name.anonymous,
    let compatible_comp_name := name.mk_string (string.append x "_compatible_comp") name.anonymous,
@@ -133,8 +133,6 @@ do let has_x_name := name.mk_string (string.append "has_" x) name.anonymous,
    add_decl $ mk_definition decl_name (collect_univ_params decl_type) decl_type decl_body
 
 -- todo: go bundled
-
--- todo: fix universes
 
 -- #print group  -- can we obtain the "extends monoid" information somehow, or is it inlined?
 
@@ -253,11 +251,107 @@ meta def add_homomorphism_comp (struct_name : name) : command :=
 do decl ← homomorphism_comp struct_name,
    add_decl decl
 
-run_cmd add_homomorphism_type `ordered_ring
-#print ordered_ring_homomorphism
-run_cmd add_id_homomorphism `ordered_ring
-#print ordered_ring_id_homomorphism
-run_cmd add_homomorphism_comp `ordered_ring
-#print ordered_ring_homomorphism_comp
+-- run_cmd add_homomorphism_type `ordered_ring
+-- #print ordered_ring_homomorphism
+-- run_cmd add_id_homomorphism `ordered_ring
+-- #print ordered_ring_id_homomorphism
+-- run_cmd add_homomorphism_comp `ordered_ring
+-- #print ordered_ring_homomorphism_comp
 
--- better to generate the homomorphism structure!!
+meta structure structure_info :=
+(structure_name   : name)
+(type             : expr)
+(field_names      : list name)
+(field_values     : list expr)
+(flat             : bool := ff)
+(extend           : list string := [])
+
+-- are the following functions already defined?
+def starts_with {α : Type*} [decidable_eq α]: list α → list α → bool
+| l [] := tt
+| [] (h::t) := ff
+| (hl::tl) (h::t) := if h = hl then starts_with tl t else ff
+
+-- sublist for the python-style slice [n:]
+def end_slice {α : Type*} (n : ℕ) (l : list α): list α := prod.snd (list.split_at n l)
+
+def find_all {α : Type*} [decidable_eq α] (l : list α) (pattern : list α) : list ℕ :=
+list.filter (λ n, starts_with (end_slice n l) pattern) (list.range l.length)
+
+def split_aux {α : Type*} [decidable_eq α] : list ℕ → list α → ℕ → ℕ → list (list α)
+| [] l offset jump      := [l]
+| (hi::ti) l offset jump := (list.split_at (hi - offset) l).1 :: (split_aux ti (list.split_at jump (list.split_at (hi - offset) l).2).2 (hi + jump) jump)
+
+def split {α : Type*} [decidable_eq α] (l : list α) (pattern : list α) : list (list α) :=
+split_aux (find_all l pattern) l 0 (pattern.length)
+
+def list.replace {α : Type*} [decidable_eq α] (l : list α) (pattern : list α) (replace_with : list α) : list α :=
+list.intercalate replace_with (split l pattern)
+
+def string.replace (pattern : string) (replace_with : string) (s : string) : string :=
+list.as_string (list.replace s.to_list pattern.to_list replace_with.to_list)
+
+-- def list.collapse_repeat {α : Type} [decidable_eq α] [inhabited α] (x : α) (l : list α) : list α :=
+-- list.map prod.fst $ list.filter (λ y, ¬ (y.1 = x ∧ y.2 = x)) (list.zip l (l.tail ++ [default α]))
+
+-- def string.collapse_repeat (x : char) (s : string) : string :=
+-- list.as_string (list.collapse_repeat x s.to_list)
+
+meta def homomorphism_structure (struct_name : name) : tactic structure_info :=
+do fields_opt ← get_data_fields struct_name,
+   fields ← fields_opt,
+   let field_names := fields.map local_pp_name,
+   let base_type := list.head fields,
+   let struct_u : expr :=  expr.const struct_name [level.param `u],
+   let struct_v : expr :=  expr.const struct_name [level.param `v],
+   α ← mk_local' `α binder_info.implicit (sort (level.succ (level.param `u))),
+   β ← mk_local' `β binder_info.implicit (sort (level.succ (level.param `v))),
+   i₁ ← mk_local' `i₁ binder_info.inst_implicit (struct_u α),
+   i₂ ← mk_local' `i₂ binder_info.inst_implicit (struct_v β),
+   f ← mk_local' `f binder_info.default (pi `ff binder_info.default α β),
+   compatibilities ← (list.tail fields).mmap (compatibility_condition struct_name base_type α β i₁ i₂ f),
+   type_main ← to_expr ``(Prop),
+   let struct_type := expr.pis [α, β, i₁, i₂, f] type_main,
+   let struct_name := mk_simple_name (string.append struct_name.to_string "_homomorphism"),
+   return ⟨struct_name, struct_type, field_names.tail, compatibilities, ff, []⟩
+
+meta def pp_type (type : expr) : string :=
+list.as_string (list.map (λ c, if c = ',' then ':' else c) (prod.snd (type.to_string.to_list.split_at 3)))
+
+meta def expr.to_string_aux : expr → list name → string
+| (expr.app f arg) l := string.join ["(@", expr.to_string_aux f l, " ", expr.to_string_aux arg l, ")"]
+| (expr.pi var_name bi var_type body) l :=
+  string.join $ match bi with
+  | binder_info.default := ["Pi (", var_name.to_string, " : ", expr.to_string_aux var_type l, "), ", expr.to_string_aux body (var_name::l)]
+  | binder_info.implicit := ["Pi {", var_name.to_string, " : ", expr.to_string_aux var_type l, "}, ", expr.to_string_aux body (var_name::l)]
+  | binder_info.strict_implicit := ["Pi ⦃", var_name.to_string, " : ", expr.to_string_aux var_type l, "⦄, ", expr.to_string_aux body (var_name::l)]
+  | binder_info.inst_implicit := ["Pi [", var_name.to_string, " : ", expr.to_string_aux var_type l, "], ", expr.to_string_aux body (var_name::l)]
+  | _ := []
+  end
+| (expr.var n) l := match list.nth l n with
+                    | some name := name.to_string
+                    | none := ""
+                    end
+| e l := expr.to_string e  -- assume there are no elets and lams
+
+meta def expr.to_string' (e : expr) : string :=
+string.replace "@(" "(" $ expr.to_string_aux e []
+
+meta def emit_structure_here (s : structure_info) : lean.parser unit :=
+do let fields := string.join $ list.map (λ (f : name × expr), string.join ["(", f.fst.to_string, " : ", (expr.to_string' f.snd), ") "])
+                                        (list.zip s.field_names s.field_values),
+   let str := string.replace ".{succ u}" ".{u + 1}" $
+              string.replace ".{succ v}" ".{v + 1}" $
+              string.join ["class ", s.structure_name.to_string, " ", pp_type s.type, " := ", fields],
+   trace str,
+   lean.parser.emit_code_here str
+
+@[user_command]
+meta def emit_homomorphism_structure_cmd (_ : interactive.parse $ lean.parser.tk "emit_homomorphism_structure") : lean.parser unit :=
+do struct_name ← lean.parser.ident,
+   s ← lean.parser.of_tactic $ homomorphism_structure struct_name,
+   emit_structure_here s
+   .
+
+emit_homomorphism_structure ordered_ring
+#print ordered_ring_homomorphism

@@ -10,15 +10,14 @@ import algebra.group
 import category_theory.concrete_category
 open expr tactic
 
-set_option trace.app_builder true
-set_option pp.universes true
-set_option pp.implicit true
-set_option formatter.hide_full_terms false
--- set_option trace.eqn_compiler.elim_match true
+-- set_option trace.app_builder true
+-- set_option pp.universes true
+-- set_option pp.implicit true
+-- set_option formatter.hide_full_terms false
 
 universes u v w
 
--- replace with library functions
+-- todo: replace with library functions
 meta def arrow_list : expr → list expr
 | (pi _ _ d b)           := d :: (arrow_list b)
 | x                      := [x]
@@ -113,25 +112,6 @@ do t ← infer_type field,
    return (expr.lambdas vars proof)
 -- for any transitive target? eq, if, iff, ...
 
--- meta def concrete_category_declaration_has_x (x : string) : tactic declaration :=
--- do let has_x_name := name.mk_string (string.append "has_" x) name.anonymous,
---    has_x ← mk_const has_x_name,
---    let compatible_name := name.mk_string (string.append x "_compatible") name.anonymous,
---    let compatible_id_name := name.mk_string (string.append x "_compatible_id") name.anonymous,
---    let compatible_comp_name := name.mk_string (string.append x "_compatible_comp") name.anonymous,
---    let compatible : expr := expr.const compatible_name [],
---    let compatible_id : expr := expr.const compatible_id_name [],
---    let compatible_comp : expr := expr.const compatible_comp_name [],
---    decl_type ← to_expr ``(@category_theory.concrete_category (λ (α : Type), %%has_x α) %%compatible),
---    decl_body ← to_expr ``(@category_theory.concrete_category.mk (λ (α : Type), %%has_x α) %%compatible
---                           %%compatible_id %%compatible_comp),
---    let decl_name := name.mk_string (string.append x "_category") name.anonymous,
---    return $ mk_definition decl_name (collect_univ_params decl_type) decl_type decl_body
-
--- meta def add_concrete_category_has_x (struct_name : string) : command :=
--- do decl ← concrete_category_declaration_has_x struct_name,
---    add_decl decl
-
 meta def get_parameters (struct_name : name) : tactic (option (list expr)) :=
 do env ← tactic.get_env,
    let mk_name := struct_name,
@@ -161,38 +141,6 @@ meta def get_data_fields (struct_name : name) : tactic (option (list expr)) :=
 do fields ← get_fields struct_name,
    trace fields,
    traversable.traverse (list.mfilter is_data_field) fields
-
--- def all_but_last {α : Type u} : list α → list α
--- | []        := []
--- | (a :: []) := []
--- | (a :: l)  := a :: (all_but_last l)
-
--- meta def homomorphism_type (struct_name : name) : tactic declaration :=
--- do fields_opt ← get_data_fields struct_name,
---    fields ← fields_opt,
---    params_opt ← get_parameters struct_name,
---    params ← params_opt,
---    let base_type := list.head params,
---    let struct_u : expr :=  expr.const struct_name [level.param `u],
---    let struct_v : expr :=  expr.const struct_name [level.param `v],
---    α ← mk_local' `α binder_info.implicit (sort (level.succ (level.param `u))),
---    β ← mk_local' `β binder_info.implicit (sort (level.succ (level.param `v))),
---    i₁ ← mk_local' `i₁ binder_info.inst_implicit (struct_u α),
---    i₂ ← mk_local' `i₂ binder_info.inst_implicit (struct_v β),
---    f ← mk_local' `f binder_info.default (pi `a binder_info.default α β),
-
---    compatibilities ← fields.mmap (compatibility_condition struct_name base_type α β i₁ i₂ f),
---    and ← mk_const `and,
---    let body := dite (compatibilities = list.nil) (λ h, expr.const `true [])
---                 (λ h, list.foldr (λ a b, and a b) (list.last compatibilities h) (all_but_last compatibilities)),
---    type_main ← to_expr ``((%%α → %%β) → Prop),
---    let decl_type := expr.pis [α, β, i₁, i₂] type_main,
---    let decl_name := mk_simple_name (string.append struct_name.to_string "_homomorphism"),
---    return (mk_definition decl_name (collect_univ_params decl_type) decl_type (expr.lambdas [α, β, i₁, i₂, f] body))
-
--- meta def add_homomorphism_type (struct_name : name) : command :=
--- do decl ← homomorphism_type struct_name,
---    add_decl decl
 
 meta def id_homomorphism (struct_name : name) : tactic declaration :=
 do fields_opt ← get_data_fields struct_name,
@@ -295,12 +243,6 @@ list.intercalate replace_with (split l pattern)
 def string.replace (pattern : string) (replace_with : string) (s : string) : string :=
 list.as_string (list.replace s.to_list pattern.to_list replace_with.to_list)
 
--- def list.collapse_repeat {α : Type} [decidable_eq α] [inhabited α] (x : α) (l : list α) : list α :=
--- list.map prod.fst $ list.filter (λ y, ¬ (y.1 = x ∧ y.2 = x)) (list.zip l (l.tail ++ [default α]))
-
--- def string.collapse_repeat (x : char) (s : string) : string :=
--- list.as_string (list.collapse_repeat x s.to_list)
-
 meta def homomorphism_structure (struct_name : name) : tactic structure_info :=
 do fields_opt ← get_data_fields struct_name,
    fields ← fields_opt,
@@ -359,9 +301,6 @@ do struct_name ← lean.parser.ident,
    s ← lean.parser.of_tactic $ homomorphism_structure struct_name,
    emit_structure_here s
    .
-
--- emit_homomorphism_structure ordered_ring
--- #print ordered_ring_homomorphism
 
 def to_upper (c : char) : char :=
 let n := char.to_nat c in
@@ -423,35 +362,6 @@ do ident ← lean.parser.ident,
 meta def add_category_instance_cmd (_ : interactive.parse $ lean.parser.tk "user_add_category_instance") : lean.parser unit :=
 do struct_name ← lean.parser.ident,
    add_instance_attribute_category struct_name
-
--- emit_homomorphism_structure group
--- #print group_homomorphism
--- #check @group_homomorphism.mul
--- run_cmd add_bundled_declaration `group
--- #check group
--- #check category_theory.bundled
--- run_cmd add_id_homomorphism `group
--- run_cmd add_homomorphism_comp `group
--- #check group_homomorphism_comp
--- run_cmd add_concrete_category `group
--- add_category_instance group
--- #check group_category
-
--- emit_homomorphism_structure monoid
--- #check @monoid_homomorphism.mul
--- run_cmd add_bundled_declaration `monoid
--- #check monoid
--- #check category_theory.bundled
--- run_cmd add_id_homomorphism `monoid
--- run_cmd add_homomorphism_comp `monoid
--- #check monoid_homomorphism_comp
--- run_cmd add_concrete_category `monoid
--- add_category_instance monoid
--- #check monoid_category
-
--- #check (by apply_instance : category_theory.category (category_theory.bundled group))
-
--- projections for forgetful functors, define unpack-tactic (like {..}-notation)
 
 -- can one extract the fields based on type and name?
 -- problem: get_fields makes new locals
@@ -540,6 +450,7 @@ meta def level.pred : level → level
 | (level.succ l) := l
 | l              := l
 
+-- imitate {..} unpacking
 meta def projection_declaration (struct_name₁ : name) (struct_name₂ : name) : tactic declaration :=
 do fields_opt₁ ← get_fields struct_name₁,
    fields_opt₂ ← get_fields struct_name₂,
@@ -575,18 +486,6 @@ do fields_opt₁ ← get_fields struct_name₁,
 meta def add_projection  (struct_name₁ : name) (struct_name₂ : name) : command :=
 do decl ← (projection_declaration struct_name₁ struct_name₂),
    add_decl decl
-
--- run_cmd add_projection `group `monoid
--- run_cmd add_projection `group_homomorphism `monoid_homomorphism
--- #check @group_homomorphism_to_monoid_homomorphism
--- attribute [instance] group_to_monoid
--- attribute [instance] group_homomorphism_to_monoid_homomorphism
--- variables (α : Type u) (β : Type v) [group α] [group β] (f : α → β) [group_homomorphism f]
--- #check (by apply_instance : monoid α)
--- #check (by apply_instance : monoid_homomorphism f)
--- #check group_to_monoid
--- #check @group_homomorphism_to_monoid_homomorphism
--- #check @group_homomorphism
 
 meta def forgetful_functor_declaration (struct_name₁ struct_name₂ : name) : tactic declaration :=
 do let struct₁ : expr  := const struct_name₁ [level.param `u],

@@ -6,41 +6,16 @@ Authors: Fabian Glöckle
 Generate categories corresponding to structures.
 -/
 
+import analysis.normed_space.basic
 import algebra.group
 import category_theory.concrete_category
 open expr tactic
 
--- set_option trace.app_builder true
--- set_option pp.universes true
--- set_option pp.implicit true
--- set_option formatter.hide_full_terms false
-
 universes u v w
 
--- todo: replace with library functions
-meta def arrow_list : expr → list expr
-| (pi _ _ d b)           := d :: (arrow_list b)
-| x                      := [x]
-
-meta def codomain_type (l : list expr) : option expr := l.nth (l.length - 1)
-
-meta def codomain_is_bound (l : list expr) : bool :=
-match codomain_type l with
-| some (var _) := tt
-| _            := ff
-end
-
-meta def codomain_is_base (l : list expr) (base : expr) :=
-match codomain_type l with
-| some base := tt
-| _         := ff
-end
-
-meta def codomain_is_prop (l : list expr) : bool :=
-match codomain_type l with
-| some (sort level.zero) := tt
-| _                      := ff
-end
+meta def codomain : expr → expr
+| (pi _ _ _ b)  := codomain b
+| e             := e
 
 meta def field_name (field : expr) : string := (local_pp_name field).to_string
 
@@ -50,8 +25,8 @@ do t ← infer_type field,
    let field_name_str := field_name field,
    let field_name := struct_name <.> field_name_str,
    arity ← get_pi_arity t,
-   let target_self := codomain_is_base (arrow_list t) base,
-   let target_prop := codomain_is_prop (arrow_list t),
+   let target_self := (codomain t) =ₐ base,
+   let target_prop := (codomain t) =ₐ sort level.zero,
    let nm := λ (n : ℕ), mk_simple_name (string.append "x" (to_string n)),
    let vars := list.map
     (λ n, expr.local_const (nm n) (nm n) binder_info.implicit α)
@@ -67,7 +42,7 @@ do t ← infer_type field,
 meta def homomorphism_id_part (struct_name : name) (base : expr) (α i ida : expr)
   (field : expr) : tactic expr :=
 do t ← infer_type field,
-   let target_prop := codomain_is_prop (arrow_list t),
+   let target_prop := (codomain t) =ₐ sort level.zero,
    let field_name_str := field_name field,
    let field_name := struct_name <.> field_name_str,
    arity ← get_pi_arity t,
@@ -85,7 +60,7 @@ do t ← infer_type field,
 meta def homomorphism_comp_part (struct_name : name) (base : expr) (α β γ ia ib ic f g hf hg : expr)
   (field : expr) (field_number : ℕ) (num_fields : ℕ): tactic expr :=
 do t ← infer_type field,
-   let target_prop := codomain_is_prop (arrow_list t),
+   let target_prop := codomain t =ₐ sort level.zero,
    let field_name_str := field_name field,
    let field_name := struct_name <.> field_name_str,
    let hom_name := mk_simple_name (string.append struct_name.to_string "_homomorphism"),
@@ -99,10 +74,8 @@ do t ← infer_type field,
    op ← mk_app field_name ([ia] ++ vars),
    let f_op := app f op,
    op_f ← mk_app field_name ([ib] ++ fs),
-  trace hf,
    hhf ← mk_mapp hom_field_name [some α, some β, some ia, some ib, some f, some hf] ,
    hhg ← mk_mapp hom_field_name [some β, some γ, some ib, some ic, some g, some hg],
-   trace hhf,
    let hf_vars := expr.app_of_list hhf vars,
    let hg_fs := expr.app_of_list hhg fs,
    proof ← (if target_prop then
@@ -114,15 +87,14 @@ do t ← infer_type field,
 
 meta def get_parameters (struct_name : name) : tactic (option (list expr)) :=
 do env ← tactic.get_env,
-   let mk_name := struct_name,
-   let mk := exceptional.to_option $ environment.get env mk_name,
-   let t := option.map declaration.type mk,
+   let constr := exceptional.to_option $ environment.get env struct_name,
+   let t := option.map declaration.type constr,
    res ← traversable.traverse tactic.mk_local_pis t,
    return (option.map prod.fst res)
 
 -- By a simple heuristic, a field is an argument to the constructor whose name is not the same as
 -- a parameter's. E.g. for "group α", the α argument to the constructor is not considered a field.
-meta def get_fields (struct_name : name) : tactic (option (list expr)) :=
+meta def get_parameters_and_fields (struct_name : name) : tactic ((list expr) × (list expr)) :=
 do env ← tactic.get_env,
    let mk_name := struct_name <.> "mk",
    let mk := exceptional.to_option $ environment.get env mk_name,
@@ -131,23 +103,20 @@ do env ← tactic.get_env,
    do fields ← (option.map prod.fst res),
       params_opt ← get_parameters struct_name,
       param_names ← option.map (list.map field_name) params_opt,
-      return $ list.filter (λ f, field_name f ∉ param_names) fields
+      return $ list.partition (λ f, field_name f ∈ param_names) fields
 
 meta def is_data_field (field : expr) : tactic bool :=
 do t ← infer_type field,
    (is_prop t) >>= (λ x, return (bnot x))  -- ??
 
-meta def get_data_fields (struct_name : name) : tactic (option (list expr)) :=
-do fields ← get_fields struct_name,
-   trace fields,
-   traversable.traverse (list.mfilter is_data_field) fields
+meta def get_parameters_and_data_fields (struct_name : name) : tactic ((list expr) × (list expr)) :=
+do (params, fields) ← get_parameters_and_fields struct_name,
+   data_fields ← (list.mfilter is_data_field) fields,
+   return (params, data_fields)
 
 meta def id_homomorphism (struct_name : name) : tactic declaration :=
-do fields_opt ← get_data_fields struct_name,
-   fields ← fields_opt,
-   params_opt ← get_parameters struct_name,
-   params ← params_opt,
-   let base_type := list.head params,
+do (params, fields) ← get_parameters_and_data_fields struct_name,
+   let base_type := params.head,
    let struct : expr :=  expr.const struct_name [level.param `v],
    let hom_name := mk_simple_name (string.append struct_name.to_string "_homomorphism"),
    let hom_constr_name := hom_name <.> "mk",
@@ -167,11 +136,8 @@ do decl ← id_homomorphism struct_name,
    add_decl decl
 
 meta def homomorphism_comp (struct_name : name) : tactic declaration :=
-do fields_opt ← get_data_fields struct_name,
-   fields ← fields_opt,
-   params_opt ← get_parameters struct_name,
-   params ← params_opt,
-   let base_type := list.head params,
+do (params, fields) ← get_parameters_and_data_fields struct_name,
+   let base_type := params.head,
    let struct_u : expr :=  expr.const struct_name [level.param `u],
    let struct_v : expr :=  expr.const struct_name [level.param `v],
    let struct_w : expr :=  expr.const struct_name [level.param `w],
@@ -198,11 +164,9 @@ do fields_opt ← get_data_fields struct_name,
                     field_enum.fst field_enum.snd fields_enum.length),
    constr ← mk_mapp hom_constr_name [some α, some γ, some ia, some ic, some compos],
    let body := expr.app_of_list constr compatibilities,
-
    let decl_body := expr.lambdas [α, β, γ, ia, ib, ic, f, g, hf, hg] body,
    let decl_type := expr.pis [α, β, γ, ia, ib, ic, f, g, hf, hg] stmt,
    let decl_name := mk_simple_name (string.append struct_name.to_string "_homomorphism_comp"),
-   trace (collect_univ_params decl_type),
    return $ declaration.thm decl_name (collect_univ_params decl_type) decl_type (task.pure decl_body)
 -- for any transitive target? eq, if, iff, ...
 
@@ -218,17 +182,8 @@ meta structure structure_info :=
 (flat             : bool := ff)
 (extend           : list string := [])
 
--- are the following functions already defined?
-def starts_with {α : Type*} [decidable_eq α]: list α → list α → bool
-| l [] := tt
-| [] (h::t) := ff
-| (hl::tl) (h::t) := if h = hl then starts_with tl t else ff
-
--- sublist for the python-style slice [n:]
-def end_slice {α : Type*} (n : ℕ) (l : list α): list α := prod.snd (list.split_at n l)
-
 def find_all {α : Type*} [decidable_eq α] (l : list α) (pattern : list α) : list ℕ :=
-list.filter (λ n, starts_with (end_slice n l) pattern) (list.range l.length)
+list.filter (λ n, list.is_prefix_of pattern (prod.snd (list.split_at n l))) (list.range l.length)
 
 def split_aux {α : Type*} [decidable_eq α] : list ℕ → list α → ℕ → ℕ → list (list α)
 | [] l offset jump      := [l]
@@ -244,12 +199,8 @@ def string.replace (pattern : string) (replace_with : string) (s : string) : str
 list.as_string (list.replace s.to_list pattern.to_list replace_with.to_list)
 
 meta def homomorphism_structure (struct_name : name) : tactic structure_info :=
-do fields_opt ← get_data_fields struct_name,
-   fields ← fields_opt,
-   trace fields,
-   params_opt ← get_parameters struct_name,
-   params ← params_opt,
-   let base_type := list.head params,
+do (params, fields) ← get_parameters_and_data_fields struct_name,
+   let base_type := params.head,
    let field_names := fields.map local_pp_name,
    let struct_u : expr :=  expr.const struct_name [level.param `u],
    let struct_v : expr :=  expr.const struct_name [level.param `v],
@@ -292,7 +243,6 @@ do let fields := string.join $ list.map (λ (f : name × expr), string.join ["("
    let str := string.replace ".{succ u}" ".{u + 1}" $
               string.replace ".{succ v}" ".{v + 1}" $
               string.join ["class ", s.structure_name.to_string, " ", pp_type s.type, " := ", fields],
-   trace str,
    lean.parser.emit_code_here str
 
 @[user_command]
@@ -316,7 +266,7 @@ string.join $ list.map capitalize (s.split (λ c, c = '_'))
 meta def bundled_declaration (struct_name : name) : tactic declaration :=
 do let decl_name := camel_case struct_name.to_string,
    let decl_type : expr := sort (level.succ (level.succ (level.param `u))),
-   let grp : expr := expr.const `group [level.param `u],
+   let grp : expr := expr.const struct_name [level.param `u],
    decl_body ← to_expr ``(category_theory.bundled %%grp),
    return (mk_definition decl_name (collect_univ_params decl_type) decl_type decl_body)
 
@@ -336,10 +286,8 @@ do let struct : expr := const struct_name [level.param `u],
    let cc_name := (name.mk_string "category_theory" name.anonymous) <.> "concrete_category",
    let cc_constr_name := cc_name <.> "mk",
    decl_type ← mk_app cc_name [struct, hom],
-   trace decl_type,
    decl_body ← mk_app cc_constr_name [struct, hom, id_lemma, comp_lemma],
    let decl_name := name.mk_string (string.append struct_name.to_string "_category") name.anonymous,
-   trace (collect_univ_params decl_type),
    return $ mk_definition decl_name (collect_univ_params decl_type) decl_type decl_body
 
 meta def add_concrete_category (struct_name : name) : command :=
@@ -371,7 +319,6 @@ do struct_name ← lean.parser.ident,
   --  let needed := list.zip needed_types needed_names,
   --  let filter_function := λ (needed : expr × string) (field : expr × (expr × string)), field.2 = needed,
   --  let filters := list.map (λ n, (list.filter (filter_function n) given)) needed,
-  --  trace filters,
   --  return $ list.join (list.map (λ n, list.map prod.fst (list.filter (filter_function n) given)) needed)
 
 -- extract fields by the simple heuristic of looking for the same field names
@@ -452,15 +399,8 @@ meta def level.pred : level → level
 
 -- imitate {..} unpacking
 meta def projection_declaration (struct_name₁ : name) (struct_name₂ : name) : tactic declaration :=
-do fields_opt₁ ← get_fields struct_name₁,
-   fields_opt₂ ← get_fields struct_name₂,
-   params_opt₁ ← get_parameters struct_name₁,
-   params₁ ← params_opt₁,
-   params_opt₂ ← get_parameters struct_name₂,
-   params₂ ← params_opt₂,
-   fields₁ ← fields_opt₁,
-   fields₂ ← fields_opt₂,
-   trace params₁,
+do (params₁, fields₁) ← get_parameters_and_fields struct_name₁,
+   (params₂, fields₂) ← get_parameters_and_fields struct_name₂,
    levels ← get_universes params₁,
    let univs := list.map level.pred levels,
    let names₁ := list.map field_name fields₁,
@@ -472,7 +412,6 @@ do fields_opt₁ ← get_fields struct_name₁,
    i ← mk_local' `i binder_info.inst_implicit (mk_app struct₁ params₁),
    let constr : expr := const struct₂_constr_name univs,
    params ← infer_param_instances params₂ params₁,
-   trace params,
    let stmt : expr := mk_app struct₂ params,
    let fields : list expr := list.map
      (λ f, (mk_app (const (struct_name₁ <.> (field_name f)) univs) params₁ i))
@@ -508,7 +447,7 @@ do decl ← forgetful_functor_declaration struct_name₁ struct_name₂,
 meta def register_structure (struct_name : name) : lean.parser unit :=
 do s ← lean.parser.of_tactic $ homomorphism_structure struct_name,
    emit_structure_here s,
-  --  add_bundled_declaration struct_name,
+   add_bundled_declaration struct_name,
    add_id_homomorphism struct_name,
    add_homomorphism_comp struct_name,
    add_concrete_category struct_name,
@@ -535,14 +474,66 @@ do struct_name ← lean.parser.ident,
 meta def register_forgetful_cmd (_ : interactive.parse $ lean.parser.tk "register_forgetful_functor") : lean.parser unit :=
 do struct_name₁ ← lean.parser.ident,
    struct_name₂ ← lean.parser.ident,
-   trace struct_name₁,
    register_forgetful struct_name₁ struct_name₂
    .
 
+-- Examples
+
+-- Generate homomorphism structure and concrete category for group structure. The lemmas on
+-- compositions and identities are auto-generated.
+-- (The code only uses the definition of the group structure.)
+
 register_structure group
+
+-- This does the following:
+
+-- emit_homomorphism_structure group
+-- #print group_homomorphism
+-- #check @group_homomorphism.mul
+-- run_cmd add_bundled_declaration `group
+-- #check Group
+-- run_cmd add_id_homomorphism `group
+-- run_cmd add_homomorphism_comp `group
+-- #check group_homomorphism_comp
+-- run_cmd add_concrete_category `group
+-- user_add_category_instance group
+-- #check group_category
+-- #check (by apply_instance : category_theory.category (category_theory.bundled group))
+
+-- Similarly, define the category of monoids.
+
 register_structure monoid
-register_structure ordered_ring
-register_structure add_group
+
+-- Define the forgetful functor from groups to monoids. The code assumes that group contains at least
+-- all fields that monoid has.
 
 register_forgetful_functor group monoid
-register_forgetful_functor ordered_ring add_group
+
+-- The code does the following:
+
+-- run_cmd add_projection `group `monoid
+-- run_cmd add_projection `group_homomorphism `monoid_homomorphism
+-- #check group_to_monoid
+-- #check group_homomorphism_to_monoid_homomorphism
+-- attribute [instance] group_to_monoid
+-- attribute [instance] group_homomorphism_to_monoid_homomorphism
+-- variables (α : Type u) (β : Type v) [group α] [group β] (f : α → β) [group_homomorphism f]
+-- #check (by apply_instance : monoid α)
+-- #check (by apply_instance : monoid_homomorphism f)
+
+register_structure ordered_comm_group
+register_structure add_group
+
+-- This works for all algebraic structures. For other structures, "weak homomorphisms" are generated
+-- for propositional fields (e. g. x ≤ y → f x ≤ f y). However, assuming all fields of the structure
+-- to be relevant for homomorphisms can lead to "wrong" behavior. For instance, if a structure extends
+-- both has_le and has_lt, then weak homomorphisms will have to satisfy both
+-- x ≤ y → f x ≤ f y   and   x < y → f x < f y,
+-- an atypical choice.
+-- The approach can be extended to include a "library" of structures and their corresponding
+-- homomorphism types in case they cannot be auto-generated. These can be used to generate
+-- homomorphism types for structures derived from these.
+
+#check normed_group
+
+#print ordered_comm_group_homomorphism

@@ -6,8 +6,8 @@ Authors: Fabian Glöckle
 Generate categories corresponding to structures.
 -/
 
-import analysis.normed_space.basic
-import algebra.group
+import analysis.normed_space.basic  -- for example section
+import algebra.group                -- for example section
 import category_theory.concrete_category
 open expr tactic
 
@@ -25,6 +25,8 @@ do t ← infer_type field,
    let field_name_str := field_name field,
    let field_name := struct_name <.> field_name_str,
    arity ← get_pi_arity t,
+   target_class ← is_class t,
+   -- todo: use already defined homomorphisms for to_... fields of new style structures
    let target_self := (codomain t) =ₐ base,
    let target_prop := (codomain t) =ₐ sort level.zero,
    let nm := λ (n : ℕ), mk_simple_name (string.append "x" (to_string n)),
@@ -311,16 +313,6 @@ meta def add_category_instance_cmd (_ : interactive.parse $ lean.parser.tk "user
 do struct_name ← lean.parser.ident,
    add_instance_attribute_category struct_name
 
--- can one extract the fields based on type and name?
--- problem: get_fields makes new locals
--- meta def extract_fields2 (needed_types : list expr) (needed_names : list string)
-  -- (given_fields : list expr) (given_types : list expr) (given_names : list string) : tactic (list expr) :=
--- do let given := list.zip given_fields (list.zip given_types given_names),
-  --  let needed := list.zip needed_types needed_names,
-  --  let filter_function := λ (needed : expr × string) (field : expr × (expr × string)), field.2 = needed,
-  --  let filters := list.map (λ n, (list.filter (filter_function n) given)) needed,
-  --  return $ list.join (list.map (λ n, list.map prod.fst (list.filter (filter_function n) given)) needed)
-
 -- extract fields by the simple heuristic of looking for the same field names
 meta def extract_fields (needed : list string) (given_fields : list expr) (given : list string) : list expr :=
 let given := list.zip given_fields given in
@@ -526,14 +518,19 @@ register_structure add_group
 
 -- This works for all algebraic structures. For other structures, "weak homomorphisms" are generated
 -- for propositional fields (e. g. x ≤ y → f x ≤ f y). However, assuming all fields of the structure
--- to be relevant for homomorphisms can lead to "wrong" behavior. For instance, if a structure extends
+-- to be relevant for homomorphisms can lead to wrong behavior. For instance, if a structure extends
 -- both has_le and has_lt, then weak homomorphisms will have to satisfy both
 -- x ≤ y → f x ≤ f y   and   x < y → f x < f y,
 -- an atypical choice.
--- The approach can be extended to include a "library" of structures and their corresponding
--- homomorphism types in case they cannot be auto-generated. These can be used to generate
--- homomorphism types for structures derived from these.
-
-#check normed_group
 
 #print ordered_comm_group_homomorphism
+
+-- For "new style" structures (with "to_..."-projections to structures they extend), the code does
+-- not (yet) work, but it can easily be adapted.
+
+-- #print normed_group
+-- register_structure normed_group  -- currently does not work
+
+-- A good approach would be a "library" of structures and their corresponding homomorphism types in
+-- case they cannot be auto-generated (for topological spaces, or preorders, see above). These could
+-- then be used to generate homomorphism types for structures derived from these.
